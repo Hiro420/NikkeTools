@@ -198,6 +198,10 @@ namespace Shiftup.Patch.Runtime
             return copied;
         }
 
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException("ChunkStream does not support writing.");
+        public override void SetLength(long value) => throw new NotSupportedException("ChunkStream does not support setting length.");
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException("ChunkStream does not support seeking.");
+
         private void ReadChunkInto(in ChunkInfo chunk, int chunkOffset, Span<byte> destination)
         {
             if (_chunkCache.TryRead(chunk.Hash, chunkOffset, destination))
