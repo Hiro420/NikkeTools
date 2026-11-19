@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using UnityEngine;
 
 namespace Shiftup.Patch.Runtime
@@ -70,7 +70,17 @@ namespace Shiftup.Patch.Runtime
                 );
                 long offset = BinaryPrimitives.ReadInt64LittleEndian(record.Slice(16, 8));
                 int size = BinaryPrimitives.ReadInt32LittleEndian(record.Slice(24, 4));
-                _entries[key] = new ValueTuple<long, int>(offset, size);
+
+                if (size < 0)
+                    throw new ChunkStoreInvalidException(
+                        $"Chunk store index entry {i} has a negative size: hash={key}, size={size}.");
+
+                // A duplicate hash would silently collapse in the dictionary, making
+                // GetAllHashes().Count disagree with the count this file declares.
+                if (!_entries.TryAdd(key, new ValueTuple<long, int>(offset, size)))
+                    throw new ChunkStoreInvalidException(
+                        $"Chunk store index contains a duplicate hash at entry {i}: hash={key}, " +
+                        $"declaredCount={count}, uniqueBefore={_entries.Count}.");
             }
 
             Span<byte> trailingHash = stackalloc byte[16];
@@ -92,6 +102,9 @@ namespace Shiftup.Patch.Runtime
 
     internal sealed class ChunkStore : IDisposable
     {
+        /// <summary>Size of the data-file header; all chunk ranges begin at or beyond it.</summary>
+        private const int DataHeaderSize = 256;
+
         private readonly string _filePath;
         private FileStream _stream;
         private readonly ChunkStoreIndex _index;
@@ -132,25 +145,47 @@ namespace Shiftup.Patch.Runtime
 
         private void LoadExistingFile()
         {
-            if (_stream.Length < 256)
+            if (_stream.Length < DataHeaderSize)
                 throw new ChunkStoreInvalidException(
                     "Chunk store data file is shorter than the header: " +
-                    $"length={_stream.Length}B, expected>=256B."
+                    $"length={_stream.Length}B, expected>={DataHeaderSize}B."
                 );
 
             ReadHeader();
             _index.Load();
-            long end = GetDataEnd();
-            if (_stream.Length < end)
-                throw new ChunkStoreInvalidException(
-                    "Indexed entries extend past the end of the chunk store data file: " +
-                    $"length={_stream.Length}B, indexedEnd={end}."
-                );
+            ValidateEntryRanges();
+        }
+
+        /// <summary>
+        /// Every indexed range must sit at or beyond the 256-byte file header and
+        /// end inside the data file. Without this the reader serves header bytes as
+        /// chunk content, or defers an impossible range to read time as a raw
+        /// IOException from the FileStream instead of the typed store error.
+        /// </summary>
+        private void ValidateEntryRanges()
+        {
+            long fileLength = _stream.Length;
+            foreach (KeyValuePair<Hash128, ValueTuple<long, int>> pair in _index.GetEnumerator())
+            {
+                long offset = pair.Value.Item1;
+                int size = pair.Value.Item2;
+
+                if (offset < DataHeaderSize)
+                    throw new ChunkStoreInvalidException(
+                        $"Chunk store index entry overlaps the {DataHeaderSize}-byte file header: " +
+                        $"hash={pair.Key}, fileOffset={offset}, size={size}.");
+
+                // offset and size are both non-negative here, so this subtraction cannot wrap.
+                if (offset > fileLength || size > fileLength - offset)
+                    throw new ChunkStoreInvalidException(
+                        "Chunk store index entry extends past the end of the data file: " +
+                        $"hash={pair.Key}, fileOffset={offset}, size={size}, fileLength={fileLength}.");
+            }
         }
 
         private unsafe void ReadHeader()
         {
-            Span<byte> header = stackalloc byte[256];
+            Span<byte> header = stackalloc byte[DataHeaderSize];
             _stream.Position = 0;
             _stream.ReadExactly(header);
 
@@ -194,34 +229,33 @@ namespace Shiftup.Patch.Runtime
             }
         }
 
-        public long GetBytesFor(IEnumerable<Hash128> hashes)
+        /// <summary>
+        /// Sum of the stored sizes of the requested hashes. Hashes absent from the
+        /// index are counted in <paramref name="missingCount"/> instead of being
+        /// silently skipped, so a caller can tell "all present" from "some missing"
+        /// without walking the index a second time.
+        /// </summary>
+        public long GetBytesFor(IEnumerable<Hash128> hashes, out int missingCount)
         {
             lock (_lock)
             {
                 ThrowIfDisposed();
 
+                ArgumentNullException.ThrowIfNull(hashes);
+
                 long total = 0;
+                int missing = 0;
                 foreach (Hash128 hash in hashes)
                 {
                     if (_index.TryGet(hash, out ValueTuple<long, int> entry))
-                        total = unchecked(total + entry.Item2);
+                        total = checked(total + entry.Item2);
+                    else
+                        missing++;
                 }
 
+                missingCount = missing;
                 return total;
             }
-        }
-
-        private long GetDataEnd()
-        {
-            long end = 256;
-            foreach (KeyValuePair<Hash128, ValueTuple<long, int>> pair in _index.GetEnumerator())
-            {
-                ValueTuple<long, int> value = pair.Value;
-                long entryEnd = unchecked(value.Item1 + value.Item2);
-                if (entryEnd > end)
-                    end = entryEnd;
-            }
-            return end;
         }
 
         public bool TryRead(Hash128 hash, Span<byte> destination, out int bytesRead)

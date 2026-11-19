@@ -1,4 +1,4 @@
-﻿using System.IO.Compression;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -17,11 +17,30 @@ public static class FileDecryptor
 		Console.WriteLine($"Fetching url...");
 		byte[] encodedBytes = await GetProtoBytes();
 		ResStaticDataPackInfo resStaticDataPackInfo = ResStaticDataPackInfo.ParseFrom(encodedBytes);
+		resStaticDataPackInfo.Validate();
 
 		Console.WriteLine($"Got response, latest version is {resStaticDataPackInfo.Version}");
 
 		Console.WriteLine($"Downloading StaticData.pack...");
 		byte[] fileBytes = await GetStaticDataBytes(resStaticDataPackInfo.Url);
+
+		// The response advertises a size and SHA-256 for the pack; neither was ever
+		// checked. An incomplete download or a wrong file therefore surfaced much
+		// later as an unrelated crypto or 'invalid zip' error.
+		if (resStaticDataPackInfo.Size > 0 && fileBytes.LongLength != resStaticDataPackInfo.Size)
+			throw new InvalidDataException(
+				$"Downloaded StaticData.pack is {fileBytes.LongLength} bytes, " +
+				$"but the response advertised {resStaticDataPackInfo.Size}.");
+
+		if (resStaticDataPackInfo.Sha256Sum.Length > 0)
+		{
+			byte[] actualHash = SHA256.HashData(fileBytes);
+			if (!actualHash.AsSpan().SequenceEqual(resStaticDataPackInfo.Sha256Sum))
+				throw new InvalidDataException(
+					"Downloaded StaticData.pack does not match the advertised SHA-256: " +
+					$"expected={Convert.ToHexString(resStaticDataPackInfo.Sha256Sum)}, " +
+					$"actual={Convert.ToHexString(actualHash)}.");
+		}
 
 		byte[] password = Convert.FromBase64String(
 			"y8Icb/P1B/UFusrUmCiEH/DROMdh39bmZJqFEz4aagxoDivE33L4xlXkexQ2GDun0SCBItGpGIRlEwvtowDl2Q=="
