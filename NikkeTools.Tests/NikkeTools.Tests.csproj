@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for the CatalogV2 chunk store and the StaticData protobuf reader.
+
+    Both files use `internal` types and live in projects with
+    <OutputType>Exe</OutputType>, so a ProjectReference cannot see them
+    without adding [InternalsVisibleTo] to the product sources. These tests
+    therefore compile the repository sources directly (Compile Include) and
+    leave the product projects untouched.
+
+    This project is deliberately not wired into any of the five .slnx files:
+    `dotnet test NikkeTools.Tests/NikkeTools.Tests.csproj` works on its own,
+    and nothing about the existing build changes.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>NikkeTools.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Compile Include="TestData\*.cs" />
+
+    <!-- Repository sources, compiled verbatim. Nothing is copied or edited. -->
+    <Compile Include="..\CatalogV2\NikkeCatalog\Hash128.cs"        Link="Repository\Hash128.cs" />
+    <Compile Include="..\CatalogV2\NikkeCatalog\ChunkStoreStuff.cs" Link="Repository\ChunkStoreStuff.cs" />
+    <Compile Include="..\CatalogV2\NikkeCatalog\ChunkStuff.cs"      Link="Repository\ChunkStuff.cs" />
+    <Compile Include="..\StaticData\NikkeStaticData\ProtoReader.cs"           Link="Repository\ProtoReader.cs" />
+    <Compile Include="..\StaticData\NikkeStaticData\ProtoClient.cs"           Link="Repository\ProtoClient.cs" />
+    <Compile Include="..\StaticData\NikkeStaticData\ResStaticDataPackInfo.cs" Link="Repository\ResStaticDataPackInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="TestData\spookyhash-vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

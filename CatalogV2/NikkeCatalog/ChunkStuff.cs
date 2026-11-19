@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 namespace Shiftup.Patch.Runtime
@@ -38,6 +38,13 @@ namespace Shiftup.Patch.Runtime
 
         public ChunkCache(int capacity)
         {
+            // Capacity 0 is reachable from ordinary use: Program builds the cache from
+            // the store's entry count, and an empty store yields 0. Treat it as
+            // "caching disabled" rather than crashing on the first Add.
+            if (capacity < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(capacity), capacity, "Cache capacity must be non-negative.");
+
             _capacity = capacity;
             _cache = new Dictionary<Hash128, LinkedListNode<CachedChunk>>();
             _lruList = new LinkedList<CachedChunk>();
@@ -74,6 +81,9 @@ namespace Shiftup.Patch.Runtime
 
             lock (_lock)
             {
+                if (_capacity == 0)
+                    return;
+
                 if (_cache.TryGetValue(hash, out LinkedListNode<CachedChunk>? existing))
                 {
                     Promote(existing);
@@ -132,7 +142,15 @@ namespace Shiftup.Patch.Runtime
         public override long Position
         {
             get => _position;
-            set => _position = value;
+            set
+            {
+                // Stream requires ArgumentOutOfRange for a negative position. Accepting
+                // one silently shifts the next Read by |position| bytes instead.
+                if (value < 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(value), value, "Stream position must be non-negative.");
+                _position = value;
+            }
         }
 
         public ChunkStream(string key, ChunkInfo[] chunkMap, ChunkStore store, ChunkCache cache, Action<ChunkStream>? onDispose = null)
@@ -155,6 +173,9 @@ namespace Shiftup.Patch.Runtime
         public override int Read(byte[] buffer, int offset, int count)
         {
             ThrowIfDisposed();
+            if (_position < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Position), _position, "Stream position must be non-negative.");
             if (buffer == null)
                 throw new ArgumentNullException(nameof(buffer));
             if (offset < 0)

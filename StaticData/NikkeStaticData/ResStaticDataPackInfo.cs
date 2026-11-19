@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace NikkeStaticData;
@@ -51,5 +52,24 @@ public class ResStaticDataPackInfo : IProtoParsable<ResStaticDataPackInfo>
 		}
 
 		return result;
+	}
+
+	/// <summary>
+	/// Fields the caller cannot proceed without. A proto3 message decodes a
+	/// missing field to its default, so without this check a truncated or
+	/// version-skewed response silently becomes an object with an empty URL and
+	/// empty salts -- and the failure then surfaces far away as a bogus
+	/// UriFormatException or 'invalid zip' after a wrong key is derived.
+	/// </summary>
+	public void Validate()
+	{
+		if (string.IsNullOrEmpty(Url))
+			throw new InvalidDataException("StaticData pack info is missing 'url' (field 1).");
+
+		if (Salt1.Length == 0)
+			throw new InvalidDataException("StaticData pack info is missing 'salt1' (field 4).");
+
+		if (Salt2.Length == 0)
+			throw new InvalidDataException("StaticData pack info is missing 'salt2' (field 5).");
 	}
 }
